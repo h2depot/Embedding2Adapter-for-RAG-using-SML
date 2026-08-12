@@ -1,0 +1,30 @@
+hypernet:
+  model_id: "meta-llama/Llama-3.2-3B-Instruct"
+
+  tokenization:
+    max_length: 8192
+
+  # Hypernetwork-specific dimensions and training options.
+  hypernetwork:
+    task_hidden_dim: 128
+    projected_task_embedding_dim: 64
+    reduction_factor: 16
+
+  training:
+    embedding_cache_path: "./outputs/cache/embeddings_cache.npy"
+    output_dir: "./outputs/hyperformer"
+    num_train_epochs: 3
+    per_device_train_batch_size: 1
+    gradient_accumulation_steps: 8
+    bf16: True
+    gradient_checkpointing: True
+    learning_rate: 5e-5
+    warmup_steps: 100
+    logging_steps: 150
+    save_strategy: "epoch"
+    save_total_limit: 1
+    report_to: "none"
+
+  generation:
+    max_new_tokens: 2048
+    do_sample: False

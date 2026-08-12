@@ -1,0 +1,43 @@
+dataset:
+  - ds_name: "hotpotqa/hotpot_qa"
+    config: "distractor"
+    revision: "1908d6afbbead072334abe2965f91bd2709910ab"
+    split: "validation"
+    eval_size: 1000
+    sampling:
+      method: "shuffle_select"
+      seed: 36
+      size: 4000
+
+  - ds_name: "awinml/musique"
+    config: null
+    revision: "3ac762478df3609852f18dd33652a16820660a5e"
+    split: "train"
+    eval_size: 500
+    sampling:
+      method: "shuffle_select"
+      seed: 33
+      size: 3000
+
+  - ds_name: "framolfese/2WikiMultihopQA"
+    config: null
+    revision: "fe713bfbd1afbca1a65246741a75890405d56a3a"
+    split: "validation"
+    eval_size: 500
+    sampling:
+      method: "shuffle_select"
+      seed: 33
+      size: 3000
+
+  - ds_name: "yixuantt/MultiHopRAG"
+    config: "MultiHopRAG"
+    revision: "71ac0d0bd1f951d2d6b70311f7d2ae404e1ffa82"
+    split: "train"
+    eval_size: 500
+    sampling:
+      method: "shuffle_select"
+      seed: 33
+      size: 2500
+
+seed: 33
+  

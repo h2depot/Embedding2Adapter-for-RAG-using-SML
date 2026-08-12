@@ -1,0 +1,21 @@
+ollama:
+  host: "http://localhost:11434"
+
+llm:
+  model_name: "granite4.1:3b"
+  options:
+    temperature: 0.2
+    num_predict: 2048
+    num_ctx: 8192
+
+embedding:
+  model_name: "bge-m3:latest"
+  dimension: 1024
+
+chunking:
+  method: "PLC"
+  chunk_size: 1000
+  chunk_overlap: 100
+
+retrieval:
+  top_k: 5

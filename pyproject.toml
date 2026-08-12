@@ -1,0 +1,33 @@
+[project]
+name = "embd2adapter-for-rag"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.14"
+dependencies = [
+    "accelerate>=1.14.0",
+    "datasets>=5.0.0",
+    "faiss-cpu>=1.13.2",
+    "huggingface-hub>=1.23.0",
+    "ipykernel>=7.3.0",
+    "jupyter>=1.1.1",
+    "langchain-text-splitters>=1.1.1",
+    "matplotlib>=3.11.0",
+    "numpy>=2.0.0",
+    "ollama>=0.6.2",
+    "pandas>=3.0.3",
+    "peft>=0.19.1",
+    "pyarrow>=25.0.0",
+    "pyyaml>=6.0.3",
+    "torch>=2.13.0",
+    "tqdm>=4.67.0",
+    "transformers>=5.14.1",
+]
+
+[tool.uv.sources]
+torch = { index = "pytorch-cu130" }
+
+[[tool.uv.index]]
+name = "pytorch-cu130"
+url = "https://download.pytorch.org/whl/cu130"
+explicit = true
