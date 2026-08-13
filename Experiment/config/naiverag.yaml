@@ -13,7 +13,6 @@ embedding:
   dimension: 1024
 
 chunking:
-  method: "PLC"
   chunk_size: 1000
   chunk_overlap: 100
 

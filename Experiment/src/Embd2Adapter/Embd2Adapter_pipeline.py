@@ -1,58 +1,98 @@
-from pathlib import Path
-
+import gc
+import time
+import torch
 from tqdm.auto import tqdm
 
 from ...data.dataset_constructor import DatasetConstructor
-from .Type_MeanEmbedding.hypernet_trainer import HyperNetTrainer
 from ..utils.evaluation import Evaluation
 from ..utils.recorder import Recorder
 from .embd_model import Embd_Model
 from .embd2adapter_vector_store import Embd2Adapter_VectorStore
 
+
 class Embd2AdapterPipeline:
-    def __init__(self):
-        self.dataset_constructor = DatasetConstructor()
+    def __init__(self, dataset_constructor=None):
+        self.dataset_constructor = dataset_constructor or DatasetConstructor()
         self.embd_model = Embd_Model()
         self.vector_store = Embd2Adapter_VectorStore(self.embd_model)
-        self.hypernet_trainer = HyperNetTrainer(
+        self._method_name = None
+        self._method_pipeline = None
+        print("Embd2Adapter Pipline Initialized!")
+        print(
+            "Experiment Setup Completed. check the datasets whether it is "
+            "correct or not, and begin training your model."
+        )
+
+    @property
+    def hypernet_trainer(self):
+        return self.use_method(self._method_name or "mean_embds").trainer
+
+    def use_method(self, method="mean_embds"):
+        aliases = {
+            "mean_embds": "mean_embds",
+            "mean_embeddings": "mean_embds",
+            "cross_attention": "cross_attention",
+            "cross_attn": "cross_attention",
+        }
+        method_name = aliases.get(method)
+        if method_name is None:
+            raise ValueError(f"Unknown Embd2Adapter method: {method}")
+        if self._method_name == method_name:
+            return self._method_pipeline
+
+        self._release_method()
+
+        if method_name == "mean_embds":
+            from .Type_MeanEmbeddings.hypernet_meanembds_pipeline import (
+                HyperNetMeanEmbdsPipeline,
+            )
+            method_pipeline = HyperNetMeanEmbdsPipeline
+        else:
+            from .Type_CrossAttention.hypernet_crossattn_pipeline import (
+                HyperNetCrossAttentionPipeline,
+            )
+            method_pipeline = HyperNetCrossAttentionPipeline
+
+        self._method_pipeline = method_pipeline(
             self.dataset_constructor,
             self.embd_model,
         )
-        print("Embd2Adapter Pipline Initialized!")
-        print("Experiment Setup Completed. check the datasets whether it is correct or not, and begin training your model.")
+        self._method_name = method_name
+        return self._method_pipeline
 
-    def train_TypeMeanEmbd(self):
-        self.embd_model.unload()
-        recorder = Recorder()
-        log_history = self.hypernet_trainer.train()
-        recorder.record_training_history(
-            experiment="HyperNetTrainer-TypeMeanEmbedding",
-            model_name=self.hypernet_trainer.model_id,
-            log_history=log_history,
-        )
-        return log_history
+    def _release_method(self):
+        if self._method_pipeline is None:
+            return
+
+        method_pipeline = self._method_pipeline
+        self._method_pipeline = None
+        self._method_name = None
+        del method_pipeline
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+
+    def release_method(self):
+        self._release_method()
+
+    def train(self):
+        if not self._method_pipeline:
+            raise ValueError("Please define the pipline method first!")
+        return self._method_pipeline.train()
 
     def load_trained_hypernet(self, checkpoint_path=None):
-        if checkpoint_path is None:
-            checkpoint_path = (
-                Path(self.hypernet_trainer.info["training"]["output_dir"])
-                / "hypernet_state_dict.pt"
-            )
-        checkpoint_path = Path(checkpoint_path)
-        if not checkpoint_path.exists():
-            raise FileNotFoundError(
-                f"HyperNet checkpoint was not found: {checkpoint_path}"
-            )
-        self.hypernet_trainer.load_trained_hypernet(checkpoint_path)
-        print(f"Loaded trained HyperNet from {checkpoint_path}")
-        return checkpoint_path
+        if not self._method_pipeline:
+            raise ValueError("Please define the pipline method first!")
+        return self._method_pipeline.load_trained_hypernet(checkpoint_path)
 
     def _evaluate(self, dataset_name: str, use_rag: bool):
+        if not self._method_pipeline:
+            raise ValueError("Please define the pipline method first!")
         recorder = Recorder()
         eval_ds = self.dataset_constructor.datasets[dataset_name].eval_ds
         sample_count = len(eval_ds["query"])
         llm_ans = []
-        oracle_contexts = self.hypernet_trainer.build_contexts(
+        oracle_contexts = self._method_pipeline.trainer.build_contexts(
             eval_ds["gold_context"],
             eval_ds["distractor"],
         )
@@ -61,6 +101,8 @@ class Embd2AdapterPipeline:
             eval_ds["full_context"],
             oracle_contexts,
         )
+        if use_rag:
+            start_time = time.perf_counter()
         for query, full_context, oracle_context in tqdm(
             evaluation_rows,
             total=sample_count,
@@ -74,24 +116,34 @@ class Embd2AdapterPipeline:
             else:
                 contexts = oracle_context
             if not contexts:
-                raise ValueError(
-                    f"Evaluation row for {dataset_name} has no contexts."
-                )
+                raise ValueError(f"Evaluation row for {dataset_name} has no contexts.")
             context = "\n".join(contexts)
-            embedding = self.embd_model.embed(contexts)
+            context_embeddings = self.embd_model.embed(contexts)
+            query_embedding = self.embd_model.embed(query)
             llm_ans.append(
-                self.hypernet_trainer.generate_final_model(
-                    context=context,
-                    query=query,
-                    embedding=embedding,
+                self._method_pipeline.generate(
+                    context,
+                    query,
+                    context_embeddings,
+                    query_embedding,
                 )
             )
+        if use_rag:
+            elapsed_time = time.perf_counter() - start_time
         evaluation = Evaluation(
             llm_ans=llm_ans,
             ds={"answer": list(eval_ds["answer"])},
         )
         result = evaluation.get_results()
-        recorder.record(experiment="HyperNetTrainer", model_name=self.hypernet_trainer.model_id, dataset=dataset_name, rag="Naive RAG" if use_rag else "No RAG", em = result["exact_match"], f1=result["token_f1"])
+        recorder.record(
+            experiment="HyperNetTrainer",
+            model_name=self._method_pipeline.trainer.model_id,
+            dataset=dataset_name,
+            rag="Naive RAG" if use_rag else "No RAG",
+            em=result["exact_match"],
+            f1=result["token_f1"],
+            elapsed_time=elapsed_time if use_rag else None,
+        )
         return result
 
     def _evaluate_both(self, dataset_name: str):

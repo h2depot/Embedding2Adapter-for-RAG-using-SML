@@ -2,7 +2,7 @@ from .hotpotqa_dataset import HotpotQADataset
 from .musique_dataset import MusiqueDataset
 from .two_wiki_multihopqa_dataset import TwoWikiMultihopQADataset
 from .multihop_rag_dataset import MultiHopRAGDataset
-from ..src.utils.config import get_dataset_info, get_random_seed
+from ..src.utils.config import get_dataset_info, get_global_seed
 import random
 from pprint import pprint
 
@@ -23,11 +23,12 @@ class DatasetConstructor:
     )
 
     def __init__(self):
-        self.seed = get_random_seed()
+        self.seed = get_global_seed()
         random.seed(self.seed)
         self.datasets = {}
         self.create_dataset()
         self.train_ds=self._empty_dataset()
+        self.val_ds=self._empty_dataset()
         self.consolidate_dataset()
         print("Dataset Constructor Initialized!")
 
@@ -42,18 +43,23 @@ class DatasetConstructor:
         return {field: [] for field in cls.OUTPUT_FIELDS}
 
     def consolidate_dataset(self):
-        rows = [
-            {field: dataset.train_ds[field][index] for field in self.OUTPUT_FIELDS}
-            for dataset in self.datasets.values()
-            for index in range(len(dataset.train_ds["query"]))
-        ]
-        random.shuffle(rows)
-
-        for field in self.OUTPUT_FIELDS:
-            self.train_ds[field] = [row[field] for row in rows]
+        for split_name in ("train_ds", "val_ds"):
+            rows = [
+                {field: getattr(dataset, split_name)[field][index]
+                 for field in self.OUTPUT_FIELDS}
+                for dataset in self.datasets.values()
+                for index in range(len(getattr(dataset, split_name)["query"]))
+            ]
+            random.shuffle(rows)
+            target = getattr(self, split_name)
+            for field in self.OUTPUT_FIELDS:
+                target[field] = [row[field] for row in rows]
 
     def print_top5_data(self):
-        datasets = [("TRAIN_DATASET", self.train_ds)]
+        datasets = [
+            ("TRAIN_DATASET", self.train_ds),
+            ("VALIDATION_DATASET", self.val_ds),
+        ]
         datasets.extend(
             (f"EVALUATION_DATASET ({name})", dataset.eval_ds)
             for name, dataset in self.datasets.items()

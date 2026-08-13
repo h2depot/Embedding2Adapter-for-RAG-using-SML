@@ -12,7 +12,8 @@ hypernet:
 
   training:
     embedding_cache_path: "./outputs/cache/embeddings_cache.npy"
-    output_dir: "./outputs/hyperformer"
+    output_dir_mean_embds: "./outputs/mean_embds"
+    output_dir_cross_attn: "./outputs/cross_attn"
     num_train_epochs: 3
     per_device_train_batch_size: 1
     gradient_accumulation_steps: 8

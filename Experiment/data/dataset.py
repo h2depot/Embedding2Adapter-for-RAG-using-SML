@@ -32,9 +32,11 @@ class Dataset(ABC):
         self.split = info["split"]
         self.sampling = info["sampling"]
         self.eval_size = info["eval_size"]
+        self.val_size = info["val_size"]
         self.dataset: HFDataset | None = None
         self.extracted_ds = self._empty_extracted_dataset()
         self.train_ds = self._empty_extracted_dataset()
+        self.val_ds = self._empty_extracted_dataset()
         self.eval_ds = self._empty_extracted_dataset()
 
         self.dataset = self.load_sampled_dataset()
@@ -56,18 +58,21 @@ class Dataset(ABC):
         """Keep this benchmark's evaluation rows separate from its training rows."""
         self._convert_contexts_to_rag_chunks()
         row_count = len(self.extracted_ds["query"])
-        if self.eval_size < 0:
-            raise ValueError("eval_size must be non-negative.")
-        if self.eval_size > row_count:
+        if self.eval_size < 0 or self.val_size < 0:
+            raise ValueError("eval_size and val_size must be non-negative.")
+        if self.eval_size + self.val_size > row_count:
             raise ValueError(
-                f"eval_size ({self.eval_size}) exceeds the number of sampled rows "
-                f"({row_count}) for {self.ds_name}."
+                f"eval_size + val_size ({self.eval_size + self.val_size}) "
+                f"exceeds the number of sampled rows ({row_count}) for "
+                f"{self.ds_name}."
             )
 
-        split_index = row_count - self.eval_size
+        train_end = row_count - self.eval_size - self.val_size
+        val_end = row_count - self.eval_size
         for field in self.OUTPUT_FIELDS:
-            self.train_ds[field] = self.extracted_ds[field][:split_index]
-            self.eval_ds[field] = self.extracted_ds[field][split_index:]
+            self.train_ds[field] = self.extracted_ds[field][:train_end]
+            self.val_ds[field] = self.extracted_ds[field][train_end:val_end]
+            self.eval_ds[field] = self.extracted_ds[field][val_end:]
 
         # The split datasets are the public representation after extraction.
         self.extracted_ds = self._empty_extracted_dataset()
@@ -98,7 +103,6 @@ class Dataset(ABC):
             return []
         return chunking_rawtext(
             raw_text,
-            method="FLC",
             chunk_size=get_chunk_size(),
             chunk_overlap=get_chunk_overlap(),
         )
@@ -175,7 +179,11 @@ class Dataset(ABC):
         return commits[0]
 
     def show_top5(self):
-        for name, dataset in (("TRAIN_DATASET", self.train_ds), ("EVALUATION_DATASET", self.eval_ds)):
+        for name, dataset in (
+            ("TRAIN_DATASET", self.train_ds),
+            ("VALIDATION_DATASET", self.val_ds),
+            ("EVALUATION_DATASET", self.eval_ds),
+        ):
             print(f"{name}:")
             for index in range(min(5, len(dataset["query"]))):
                 pprint({field: dataset[field][index] for field in self.OUTPUT_FIELDS})

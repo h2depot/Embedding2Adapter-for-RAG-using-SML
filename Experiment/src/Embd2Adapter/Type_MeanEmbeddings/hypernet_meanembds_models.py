@@ -13,7 +13,7 @@ from ..hypernet_utils import (
 
 AdapterOutput = namedtuple('AdapterOutput', ['up', 'down', 'pre_norm', 'post_norm'])
 
-class HyperNetController(nn.Module):
+class HyperNetController_MeanEmbds(nn.Module):
     def __init__(self, device: torch.device, embd_dim:int, projected_embd_dim:int, input_dim:int, reduction_factor:int, task_hidden_dim:int,num_layers:int = 28):
         super().__init__()
         self.num_layers = num_layers
@@ -89,8 +89,8 @@ class HyperNetController(nn.Module):
         return (feed_forward_output, self_attn_output)
 
 
-class HyperNetWrapper(nn.Module):
-    def __init__(self, original_layer: nn.Module, hypernet: HyperNetController, layer_id:int):
+class HyperNetWrapper_MeanEmbds(nn.Module):
+    def __init__(self, original_layer: nn.Module, hypernet: HyperNetController_MeanEmbds, layer_id:int):
         super().__init__()
         self.original_layer = original_layer
         object.__setattr__(self, "_hypernet", hypernet)

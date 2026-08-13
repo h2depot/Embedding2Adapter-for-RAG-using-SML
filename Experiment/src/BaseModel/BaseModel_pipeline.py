@@ -1,9 +1,10 @@
 import random
+import time
 
 from tqdm.auto import tqdm
 
 from ...data.dataset_constructor import DatasetConstructor
-from ..utils.config import get_random_seed
+from ..utils.config import get_global_seed
 from ..utils.prompt import build_final_prompt
 from ..utils.evaluation import Evaluation
 from ..utils.recorder import Recorder
@@ -12,15 +13,15 @@ from .vector_store import VectorStore
 
 
 class BaseModelPipeline:
-    def __init__(self):
-        self.dataset_constructor = DatasetConstructor()
+    def __init__(self, dataset_constructor=None):
+        self.dataset_constructor = dataset_constructor or DatasetConstructor()
         self.llm = LLM()
         self.vector_store = VectorStore()
 
     def _evaluate(self, dataset_name: str, use_rag: bool):
         recorder = Recorder()
         eval_ds = self.dataset_constructor.datasets[dataset_name].eval_ds
-        rng = random.Random(get_random_seed())
+        rng = random.Random(get_global_seed())
         llm_ans = []
         oracle_contexts = []
         for gold_context, distractors in zip(
@@ -35,6 +36,8 @@ class BaseModelPipeline:
             eval_ds["full_context"],
             oracle_contexts,
         )
+        if use_rag:
+            start_time = time.perf_counter()
         for query, full_context, oracle_context in tqdm(
             evaluation_rows,
             total=len(eval_ds["query"]),
@@ -60,6 +63,8 @@ class BaseModelPipeline:
                     )
                 )
             )
+        if use_rag:
+            elapsed_time = time.perf_counter() - start_time
         evaluation = Evaluation(
             llm_ans=llm_ans,
             ds={"answer": list(eval_ds["answer"])},
@@ -72,6 +77,7 @@ class BaseModelPipeline:
             rag="Naive RAG" if use_rag else "No RAG",
             em=result["exact_match"],
             f1=result["token_f1"],
+            elapsed_time=elapsed_time if use_rag else None,
         )
         return result
 

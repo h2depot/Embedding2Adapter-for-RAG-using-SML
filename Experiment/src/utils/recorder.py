@@ -19,7 +19,16 @@ class Recorder:
         today = date.today()
         return today.strftime("%Y_%m_%d")
 
-    def record(self, experiment = "", model_name = "", dataset = "", rag = "", em = None, f1 = None):
+    def record(
+        self,
+        experiment="",
+        model_name="",
+        dataset="",
+        rag="",
+        em=None,
+        f1=None,
+        elapsed_time=None,
+    ):
         with open(self.output_path, "r", encoding="utf-8") as file:
             results = json.load(file)
 
@@ -32,6 +41,8 @@ class Recorder:
             "f1": f1,
             "time_stamp": datetime.now().isoformat(timespec="seconds")
         }
+        if elapsed_time is not None:
+            result["elapsed_time_seconds"] = elapsed_time
         results.append(result)
 
         with open(self.output_path, "w", encoding="utf-8") as file:
@@ -45,6 +56,7 @@ class Recorder:
         experiment: str,
         model_name: str,
         log_history: list[dict],
+        hypernet_spec: dict | None = None,
     ):
         with open(self.output_path, "r", encoding="utf-8") as file:
             results = json.load(file)
@@ -57,6 +69,8 @@ class Recorder:
             "log_history": history,
             "time_stamp": datetime.now().isoformat(timespec="seconds"),
         }
+        if hypernet_spec is not None:
+            result["hypernet_spec"] = self._to_json_safe(hypernet_spec)
         results.append(result)
 
         with open(self.output_path, "w", encoding="utf-8") as file:

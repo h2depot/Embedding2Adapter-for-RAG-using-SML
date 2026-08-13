@@ -14,10 +14,6 @@ def load_config(path: Path = NAIVERAG_CONFIG_PATH) -> dict:
         return yaml.safe_load(file)
 
 
-def get_chunking_method():
-    return load_config()["chunking"]["method"]
-
-
 def get_chunk_size():
     return load_config()["chunking"]["chunk_size"]
 
@@ -54,8 +50,8 @@ def get_dataset_info():
     return load_config(DEFAULT_CONFIG_PATH)["dataset"]
 
 
-def get_random_seed():
-    return int(load_config(DEFAULT_CONFIG_PATH)["seed"])
+def get_global_seed():
+    return int(load_config(DEFAULT_CONFIG_PATH)["global_seed"])
 
 
 def get_hypernet_info():

@@ -1,5 +1,22 @@
 from collections import Counter
 
+
+def token_f1_score(prediction: str, gold: str) -> float:
+    prediction_tokens = prediction.lower().split()
+    gold_tokens = gold.lower().split()
+    if not prediction_tokens or not gold_tokens:
+        return 0.0
+
+    common_count = sum(
+        (Counter(prediction_tokens) & Counter(gold_tokens)).values()
+    )
+    if common_count == 0:
+        return 0.0
+
+    precision = common_count / len(prediction_tokens)
+    recall = common_count / len(gold_tokens)
+    return 2 * precision * recall / (precision + recall)
+
 class Evaluation:
     def __init__(self, llm_ans, ds):
         self.llm_ans = llm_ans
@@ -30,22 +47,7 @@ class Evaluation:
         self.token_f1_scores = []
         for i, prediction in enumerate(self.llm_ans):
             gold = self.ds["answer"][i]
-
-            prediction_tokens = prediction.split()
-            gold_tokens = gold.split()
-            common = Counter(prediction_tokens) & Counter(gold_tokens)
-            common_count = sum(common.values())
-
-            if common_count == 0:
-                self.token_f1_scores.append(0.0)
-                continue
-
-            precision = common_count / len(prediction_tokens)
-            recall = common_count / len(gold_tokens)
-
-            f1 = 2 * precision * recall / (precision + recall)
-
-            self.token_f1_scores.append(f1)
+            self.token_f1_scores.append(token_f1_score(prediction, gold))
 
     def get_results(self):
         if self.eval1_success == 0 and self.eval1_fail == 0:

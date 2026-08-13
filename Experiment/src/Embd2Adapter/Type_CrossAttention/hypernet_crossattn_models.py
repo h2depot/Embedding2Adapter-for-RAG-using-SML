@@ -14,18 +14,34 @@ from ..hypernet_utils import (
 AdapterOutput = namedtuple('AdapterOutput', ['up', 'down', 'pre_norm', 'post_norm'])
 
 class AttentionPooling(nn.Module):
-    def __init__(self, embd_dim: int):
+    def __init__(self, embd_dim: int, num_heads: int = 8, dropout: float = 0.1):
         super().__init__()
-        self.dim = embd_dim
-        self.q_proj = nn.Linear(self.dim, self.dim)
-        self.k_proj = nn.Linear(self.dim, self.dim)
-        self.v_proj = nn.Linear(self.dim, self.dim)
+        self.embd_dim = embd_dim
+        self.num_heads = num_heads
+        self.dropout = dropout
+        self.mha = nn.MultiheadAttention(
+            embed_dim=self.embd_dim,
+            num_heads=self.num_heads,
+            dropout=self.dropout,
+            batch_first=True
+        )
 
-    def forward(self, embeddings: torch.Tensor):
-        batch_size, n, _ = embeddings.shape
+        self.norm = nn.LayerNorm(self.embd_dim)
+
+    def forward(self, contexts_embds: torch.Tensor, query_embd: torch.Tensor):
+        query = query_embd.unsqueeze(1)
+        attn_output, _ = self.mha(
+            query=query,
+            key=contexts_embds,
+            value=contexts_embds,
+        )
+        attn_output = attn_output.squeeze(1)
+        attn_output = self.norm(attn_output)
+
+        return attn_output
         
 
-class HyperNetController_MultiEmbds(nn.Module):
+class HyperNetController_CrossAttention(nn.Module):
     def __init__(self, device: torch.device, embd_dim:int, projected_embd_dim:int, input_dim:int, reduction_factor:int, task_hidden_dim:int,num_layers:int = 28):
         super().__init__()
         self.num_layers = num_layers
@@ -49,9 +65,6 @@ class HyperNetController_MultiEmbds(nn.Module):
         self.pre_layernorm_hypernet = LayerNormHyperNet(projected_embd_dim, self.input_dim)
         self.post_layernorm_hypernet = LayerNormHyperNet(projected_embd_dim, self.input_dim)
 
-    def pooling_emeddings(self, embeddings):
-        self.embds_pool(embeddings)
-
     def concatinate_input(self, embedding, layer_id, position_id):
         layer_id_tensor = torch.tensor([layer_id], dtype=torch.long, device=self.device)
         layer_embedding = self.layer_id_embeddings(layer_id_tensor)
@@ -63,8 +76,8 @@ class HyperNetController_MultiEmbds(nn.Module):
         embeddings = self.vec_hypernet(embeddings.view(-1))
         return embeddings
 
-    def forward(self, embeddings, layer_id):
-        embedding = self.pooling_emeddings(embeddings=embeddings)
+    def forward(self, context_embds, query_embd, layer_id):
+        embedding = self.embds_pool(context_embds, query_embd)
         feed_forward_embeddings = self.concatinate_input(embedding, layer_id, 0)
         self_attn_embeddings = self.concatinate_input(embedding, layer_id, 1)
 
@@ -96,8 +109,8 @@ class HyperNetController_MultiEmbds(nn.Module):
         return (feed_forward_output, self_attn_output)
 
 
-class HyperNetWrapper_MultiEmbds(nn.Module):
-    def __init__(self, original_layer: nn.Module, hypernet: HyperNetController_MultiEmbds, layer_id:int):
+class HyperNetWrapper_CrossAttention(nn.Module):
+    def __init__(self, original_layer: nn.Module, hypernet: HyperNetController_CrossAttention, layer_id:int):
         super().__init__()
         self.original_layer = original_layer
         object.__setattr__(self, "_hypernet", hypernet)
@@ -134,23 +147,46 @@ class HyperNetWrapper_MultiEmbds(nn.Module):
         past_key_values=None,
         use_cache=False,
         position_embeddings=None,
-        embeddings=None,
+        context_embds=None,
+        query_embd=None,
         **kwargs,
     ):
-        for embedding in embeddings:
-            if embedding is None:
-                raise ValueError("embedding must be passed to the model forward call.")
-            if embedding.ndim == 2:
-                if embedding.shape[0] != 1:
-                    raise ValueError("HyperNet currently supports batch_size=1 only.")
-                embedding = embedding[0]
+        if context_embds is None:
+            raise ValueError("Context embeddings must be passed to the model forward call.")
+        if context_embds.ndim != 3:
+            raise ValueError(
+                "context_embds must have shape (1, n_contexts, embedding_dim)."
+            )
+        if context_embds.shape[0] != 1:
+            raise ValueError("HyperNet currently supports batch_size=1 only.")
+        if context_embds.shape[1] < 1:
+            raise ValueError("At least one context embedding is required.")
+        if context_embds.shape[2] != self._hypernet.embd_dim:
+            raise ValueError(
+                "Unexpected context embedding dimension: "
+                f"expected {self._hypernet.embd_dim}, got {context_embds.shape[2]}."
+            )
+        if query_embd is None:
+            raise ValueError("Query embedding must be passed to the model forward call.")
+        if query_embd.ndim != 2 or query_embd.shape != (
+            1,
+            self._hypernet.embd_dim,
+        ):
+            raise ValueError(
+                "query_embd must have shape "
+                f"(1, {self._hypernet.embd_dim})."
+            )
 
-        embeddings = embeddings.to(
+        context_embds = context_embds.to(
+            device=hidden_states.device,
+            dtype=next(self._hypernet.parameters()).dtype,
+        )
+        query_embd = query_embd.to(
             device=hidden_states.device,
             dtype=next(self._hypernet.parameters()).dtype,
         )
         feed_forward_parameters, self_attn_parameters = self._hypernet(
-            embeddings, self.layer_id
+            context_embds, query_embd,self.layer_id
         )
 
         residual = hidden_states

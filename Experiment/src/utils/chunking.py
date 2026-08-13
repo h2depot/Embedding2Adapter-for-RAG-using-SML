@@ -1,17 +1,12 @@
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
-from .config import (
-    get_chunk_overlap,
-    get_chunk_size,
-    get_chunking_method,
-)
+from .config import get_chunk_overlap, get_chunk_size
 
 
 def implement_chunking(source_path, encoding="utf-8"):
     raw_text = load_rawtext(source_path, encoding)
     chunks = chunking_rawtext(
         raw_text,
-        get_chunking_method(),
         get_chunk_size(),
         get_chunk_overlap(),
     )
@@ -24,24 +19,10 @@ def load_rawtext(path, encoding="utf-8"):
         return file.read()
 
 
-def chunking_rawtext(raw_text, method, chunk_size=100, chunk_overlap=0):
-    if method == "PLC":
-        splitter = RecursiveCharacterTextSplitter(
-            chunk_size=chunk_size,
-            chunk_overlap=chunk_overlap,
-            separators=["\n\n", "\n", ". ", "? ", "! ", " ", ""],
-        )
-    elif method == "FLC":
-        splitter = RecursiveCharacterTextSplitter(
-            chunk_size=chunk_size,
-            chunk_overlap=chunk_overlap,
-        )
-    elif method == "RCC":
-        splitter = RecursiveCharacterTextSplitter(
-            chunk_size=chunk_size,
-            chunk_overlap=chunk_overlap,
-            separators=["\n\n", "\n", "。", "、", " ", ""],
-        )
-    else:
-        raise ValueError(f"Unsupported chunking method: {method}")
+def chunking_rawtext(raw_text, chunk_size=100, chunk_overlap=0):
+    """Split text with the experiment's fixed-length chunking strategy."""
+    splitter = RecursiveCharacterTextSplitter(
+        chunk_size=chunk_size,
+        chunk_overlap=chunk_overlap,
+    )
     return splitter.split_text(raw_text)
