@@ -35,7 +35,7 @@ class VectorStore:
             dimensions=self.dim,
         )
         vectors = np.array(response.get("embeddings"), dtype=np.float32)
-        print(f"Vectors shape: {vectors[0].shape}")
+        #print(f"Vectors shape: {vectors[0].shape}")
         self.db_insert(vectors)
 
     def search_query(self, query: str):

@@ -11,7 +11,8 @@ hypernet:
     reduction_factor: 16
 
   training:
-    embedding_cache_path: "./outputs/cache/embeddings_cache.npy"
+    # Resolved from the repository root, independent of the notebook CWD.
+    embedding_cache_path: "Notebooks/outputs/cache/embeddings_cache.npy"
     output_dir_mean_embds: "./outputs/mean_embds"
     output_dir_cross_attn: "./outputs/cross_attn"
     num_train_epochs: 3
@@ -20,9 +21,13 @@ hypernet:
     bf16: True
     gradient_checkpointing: True
     learning_rate: 5e-5
+    attention_loss_weight: 0.05
     warmup_steps: 100
     logging_steps: 150
-    save_strategy: "epoch"
+    eval_strategy: "steps"
+    eval_steps: 150
+    save_strategy: "steps"
+    save_steps: 150
     save_total_limit: 1
     report_to: "none"
 

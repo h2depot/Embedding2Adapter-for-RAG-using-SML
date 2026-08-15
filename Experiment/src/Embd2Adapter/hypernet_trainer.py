@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hashlib
 import random
 from pathlib import Path
 
@@ -26,6 +25,14 @@ class HyperNetTrainer:
 
     context_embedding_field = "context_embedding"
     query_embedding_field = "query_embedding"
+
+    @staticmethod
+    def _resolve_cache_path(configured_path: str) -> Path:
+        cache_path = Path(configured_path)
+        if cache_path.is_absolute():
+            return cache_path
+        repository_root = Path(__file__).resolve().parents[3]
+        return repository_root / cache_path
 
     def __init__(
         self,
@@ -54,7 +61,9 @@ class HyperNetTrainer:
         return model, tokenizer
 
     def prepare_datasets(self):
-        cache_path = Path(self.info["training"]["embedding_cache_path"])
+        cache_path = self._resolve_cache_path(
+            self.info["training"]["embedding_cache_path"]
+        )
         self.train_ds = self._prepare_dataset(
             self.dataset.train_ds,
             cache_path=cache_path,
@@ -79,30 +88,43 @@ class HyperNetTrainer:
             cache_path=cache_path,
             split_name=split_name,
         )
-        dataset[self.query_embedding_field] = self.embed_queries(dataset["query"])
+        query_cache_path = cache_path.with_name(
+            f"{cache_path.stem}_queries{cache_path.suffix}"
+        )
+        dataset[self.query_embedding_field] = self.embed_queries(
+            dataset["query"],
+            cache_path=query_cache_path,
+            split_name=split_name,
+        )
         return self.tokenize(dataset, split_name=split_name)
 
-    def embed_queries(self, queries: list[str]) -> list[list[float]]:
-        """Embed each training query and keep it separate from context vectors."""
+    def embed_queries(
+        self,
+        queries: list[str],
+        cache_path: Path | None = None,
+        split_name: str = "training",
+    ) -> list[list[float]]:
+        """Load cached query embeddings, or create and cache them."""
         if not queries:
             return []
 
-        batch_size = 128
-        embeddings = []
-        for start in tqdm(
-            range(0, len(queries), batch_size),
-            desc="Embedding training queries",
-            unit="batch",
-        ):
-            batch_queries = queries[start:start + batch_size]
-            batch_embeddings = self.embd_model.embed(batch_queries)
-            expected_shape = (len(batch_queries), self.embd_model.dim)
-            if batch_embeddings.shape != expected_shape:
-                raise ValueError(
-                    f"Embedding model returned shape {batch_embeddings.shape}; "
-                    f"expected {expected_shape}."
-                )
-            embeddings.extend(batch_embeddings.tolist())
+        if cache_path is None:
+            context_cache_path = self._resolve_cache_path(
+                self.info["training"]["embedding_cache_path"]
+            )
+            cache_path = context_cache_path.with_name(
+                f"{context_cache_path.stem}_queries{context_cache_path.suffix}"
+            )
+        cached = self._load_cache(cache_path, len(queries))
+        if cached is not None:
+            print(f"Loaded {split_name} query embeddings from {cache_path}")
+            return cached
+
+        embeddings = self._embed_batches(
+            queries, desc=f"Embedding {split_name} queries"
+        )
+        self._save_cache(cache_path, embeddings)
+        print(f"Saved {split_name} query embeddings to {cache_path}")
         return embeddings
 
     def build_contexts(
@@ -110,17 +132,34 @@ class HyperNetTrainer:
         gold_contexts: list[list[str]],
         distractor_contexts: list[list[str]],
     ) -> list[list[str]]:
+        contexts, _ = self.build_contexts_with_attention_labels(
+            gold_contexts,
+            distractor_contexts,
+        )
+        return contexts
+
+    def build_contexts_with_attention_labels(
+        self,
+        gold_contexts: list[list[str]],
+        distractor_contexts: list[list[str]],
+    ) -> tuple[list[list[str]], list[list[int]]]:
         if len(gold_contexts) != len(distractor_contexts):
             raise ValueError(
                 "gold_contexts and distractor_contexts must have the same length."
             )
         rng = random.Random(get_global_seed())
         context_groups = []
+        attention_labels = []
         for gold_context, distractors in zip(gold_contexts, distractor_contexts):
-            contexts = list(gold_context) + list(distractors)
-            rng.shuffle(contexts)
-            context_groups.append(contexts)
-        return context_groups
+            labeled_contexts = [
+                (context, 1) for context in gold_context
+            ] + [
+                (context, 0) for context in distractors
+            ]
+            rng.shuffle(labeled_contexts)
+            context_groups.append([context for context, _ in labeled_contexts])
+            attention_labels.append([label for _, label in labeled_contexts])
+        return context_groups, attention_labels
 
     def build_training_contexts(self) -> list[list[str]]:
         return self.build_contexts(
@@ -150,36 +189,18 @@ class HyperNetTrainer:
         flat_contexts = [
             context for contexts in context_groups for context in contexts
         ]
-        fingerprint = self._embedding_cache_fingerprint(
-            context_groups, flat_contexts
-        )
         if cache_path is None:
-            cache_path = Path(self.info["training"]["embedding_cache_path"])
-        if cache_path.exists():
-            cached = np.load(cache_path, allow_pickle=True).item()
-            if cached.get("fingerprint") == fingerprint:
-                embeddings = cached.get("embeddings")
-                if isinstance(embeddings, list):
-                    print(f"Loaded {split_name} embeddings from {cache_path}")
-                    return embeddings
-            print(f"Ignoring stale embedding cache: {cache_path}")
+            cache_path = self._resolve_cache_path(
+                self.info["training"]["embedding_cache_path"]
+            )
+        cached = self._load_cache(cache_path, len(context_groups))
+        if cached is not None:
+            print(f"Loaded {split_name} embeddings from {cache_path}")
+            return cached
 
-        batch_size = 128
-        embeddings = []
-        for start in tqdm(
-            range(0, len(flat_contexts), batch_size),
-            desc=f"Embedding {split_name} contexts",
-            unit="batch",
-        ):
-            batch_contexts = flat_contexts[start:start + batch_size]
-            batch_embeddings = self.embd_model.embed(batch_contexts)
-            expected_shape = (len(batch_contexts), self.embd_model.dim)
-            if batch_embeddings.shape != expected_shape:
-                raise ValueError(
-                    f"Embedding model returned shape {batch_embeddings.shape}; "
-                    f"expected {expected_shape}."
-                )
-            embeddings.extend(batch_embeddings.tolist())
+        embeddings = self._embed_batches(
+            flat_contexts, desc=f"Embedding {split_name} contexts"
+        )
 
         grouped_embeddings = []
         offset = 0
@@ -188,36 +209,55 @@ class HyperNetTrainer:
             grouped_embeddings.append(embeddings[offset:next_offset])
             offset = next_offset
 
-        cache_path.parent.mkdir(parents=True, exist_ok=True)
+        self._save_cache(cache_path, grouped_embeddings)
+        print(f"Saved {split_name} embeddings to {cache_path}")
+        return grouped_embeddings
+
+    def _load_cache(self, path: Path, expected_rows: int):
+        if not path.exists():
+            return None
+        cached = np.load(path, allow_pickle=True).item()
+        embeddings = cached.get("embeddings")
+        if (
+            cached.get("model_name") == self.embd_model.model_name
+            and cached.get("embedding_dim") == self.embd_model.dim
+            and isinstance(embeddings, list)
+            and len(embeddings) == expected_rows
+        ):
+            return embeddings
+        print(f"Ignoring stale embedding cache: {path}")
+        return None
+
+    def _save_cache(self, path: Path, embeddings):
+        path.parent.mkdir(parents=True, exist_ok=True)
         np.save(
-            cache_path,
+            path,
             {
-                "fingerprint": fingerprint,
                 "model_name": self.embd_model.model_name,
                 "embedding_dim": self.embd_model.dim,
                 "seed": get_global_seed(),
-                "embeddings": grouped_embeddings,
+                "embeddings": embeddings,
             },
             allow_pickle=True,
         )
-        print(f"Saved {split_name} embeddings to {cache_path}")
-        return grouped_embeddings
+
+    def _embed_batches(self, texts: list[str], desc: str) -> list[list[float]]:
+        embeddings = []
+        for start in tqdm(range(0, len(texts), 128), desc=desc, unit="batch"):
+            batch = texts[start:start + 128]
+            batch_embeddings = self.embd_model.embed(batch)
+            expected_shape = (len(batch), self.embd_model.dim)
+            if batch_embeddings.shape != expected_shape:
+                raise ValueError(
+                    f"Embedding model returned shape {batch_embeddings.shape}; "
+                    f"expected {expected_shape}."
+                )
+            embeddings.extend(batch_embeddings.tolist())
+        return embeddings
 
     # Compatibility with callers using the old, overly specific name.
     def embed_gold_contexts(self, context_groups=None):
         return self.embed_contexts(context_groups)
-
-    def _embedding_cache_fingerprint(self, context_groups, flat_contexts):
-        digest = hashlib.sha256()
-        digest.update(self.embd_model.model_name.encode("utf-8"))
-        digest.update(str(self.embd_model.dim).encode("ascii"))
-        digest.update(str(get_global_seed()).encode("ascii"))
-        digest.update(str([len(group) for group in context_groups]).encode("ascii"))
-        for context in flat_contexts:
-            encoded = context.encode("utf-8")
-            digest.update(len(encoded).to_bytes(8, "big"))
-            digest.update(encoded)
-        return digest.hexdigest()
 
     def tokenize(
         self,
