@@ -1,20 +1,20 @@
 from pathlib import Path
 
 from ...utils.recorder import Recorder
-from .hypernet_crossattn_trainer import HyperNetCrossAttentionTrainer
+from .hypernet_querydiffpooling_trainer import HyperNetQueryDiffPoolingTrainer
 
 
-class HyperNetCrossAttentionPipeline:
+class HyperNetQueryDiffPoolingPipeline:
     def __init__(self, dataset_constructor, embd_model):
         self.embd_model = embd_model
-        self.trainer = HyperNetCrossAttentionTrainer(dataset_constructor, embd_model)
-        print("Hypernet with CrossAttention Loaded.")
+        self.trainer = HyperNetQueryDiffPoolingTrainer(dataset_constructor, embd_model)
+        print("Hypernet with QueryDiffPooling Loaded.")
 
     def train(self):
         self.embd_model.unload()
         log_history, hypernet_spec = self.trainer.train()
         Recorder().record_training_history(
-            experiment="HyperNetTrainer-TypeCrossAttention",
+            experiment="HyperNetTrainer-TypeQueryDiffPooling",
             model_name=self.trainer.model_id,
             log_history=log_history,
             hypernet_spec=hypernet_spec,
@@ -24,7 +24,11 @@ class HyperNetCrossAttentionPipeline:
     def load_trained_hypernet(self, checkpoint_path=None):
         if checkpoint_path is None:
             checkpoint_path = (
-                Path(self.trainer.info["training"]["output_dir_cross_attn"])
+                Path(
+                    self.trainer.info["training"][
+                        "output_dir_query_diff_pooling"
+                    ]
+                )
                 / "hypernet_state_dict.pt"
             )
         checkpoint_path = Path(checkpoint_path)

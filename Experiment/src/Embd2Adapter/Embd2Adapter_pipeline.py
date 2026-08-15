@@ -31,8 +31,8 @@ class Embd2AdapterPipeline:
         aliases = {
             "mean_embds": "mean_embds",
             "mean_embeddings": "mean_embds",
-            "cross_attention": "cross_attention",
-            "cross_attn": "cross_attention",
+            "query_diff_pooling": "query_diff_pooling",
+            "query_diff": "query_diff_pooling",
         }
         method_name = aliases.get(method)
         if method_name is None:
@@ -48,10 +48,10 @@ class Embd2AdapterPipeline:
             )
             method_pipeline = HyperNetMeanEmbdsPipeline
         else:
-            from .Type_CrossAttention.hypernet_crossattn_pipeline import (
-                HyperNetCrossAttentionPipeline,
+            from .Type_QueryDiffPooling.hypernet_querydiffpooling_pipeline import (
+                HyperNetQueryDiffPoolingPipeline,
             )
-            method_pipeline = HyperNetCrossAttentionPipeline
+            method_pipeline = HyperNetQueryDiffPoolingPipeline
 
         self._method_pipeline = method_pipeline(
             self.dataset_constructor,

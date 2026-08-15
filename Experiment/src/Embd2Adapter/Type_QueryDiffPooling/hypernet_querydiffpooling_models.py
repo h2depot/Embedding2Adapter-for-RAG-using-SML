@@ -21,7 +21,7 @@ def zero_init_linear_biases(module: nn.Module):
             nn.init.zeros_(layer.bias)
 
 
-class AttentionPooling(nn.Module):
+class QueryDiffPooling(nn.Module):
     def __init__(self, embd_dim: int, num_heads: int = 8, dropout: float = 0.1, sandwich_dim: int = 256):
         super().__init__()
         self.embd_dim = embd_dim
@@ -37,6 +37,17 @@ class AttentionPooling(nn.Module):
         nn.init.zeros_(self.projector[0].bias)
         nn.init.zeros_(self.projector[2].bias)
 
+        self.diff_projector = nn.Sequential(
+            nn.Linear(self.embd_dim, self.sandwich_dim),
+            nn.GELU(),
+            nn.Linear(self.sandwich_dim, self.embd_dim),
+        )
+        nn.init.zeros_(self.diff_projector[0].bias)
+        nn.init.zeros_(self.diff_projector[2].bias)
+
+        self.pool_projector = nn.Linear(self.embd_dim * 2, self.embd_dim)
+        nn.init.zeros_(self.pool_projector.bias)
+
         self.self_mha = nn.MultiheadAttention(
             embed_dim=self.embd_dim,
             num_heads=self.num_heads,
@@ -44,175 +55,37 @@ class AttentionPooling(nn.Module):
             batch_first=True
         )
 
+        self.context_norm = nn.LayerNorm(self.embd_dim)
         self.norm1 = nn.LayerNorm(self.embd_dim)
+        self.query_norm = nn.LayerNorm(self.embd_dim)
 
-        self.cross_mha = nn.MultiheadAttention(
-            embed_dim=self.embd_dim,
-            num_heads=self.num_heads,
-            dropout=self.dropout,
-            batch_first=True
-        )
-
-        self.norm2 = nn.LayerNorm(self.embd_dim)
         zero_init_linear_biases(self)
-
-    def set_attention_dropout(self, probability: float):
-        self.self_mha.dropout = probability
-        self.cross_mha.dropout = probability
 
     def forward(
         self,
         contexts_embds: torch.Tensor,
         query_embd: torch.Tensor,
-        return_attention_weights: bool = False,
     ):
-        query = self.projector(query_embd.unsqueeze(1))
+        query = self.query_norm(self.projector(query_embd.unsqueeze(1)))
         contexts = self.projector(contexts_embds)
+        attention_input = self.context_norm(contexts)
 
         self_attn_output, _ = self.self_mha(
-            query=contexts,
-            key=contexts,
-            value=contexts,
+            query=attention_input,
+            key=attention_input,
+            value=attention_input,
+            need_weights=False,
         )
-        contexts = self.norm1(contexts + self_attn_output)
-
-        cross_attn_output, cross_attn_weights = self.cross_mha(
-            query=query,
-            key=contexts,
-            value=contexts,
-            need_weights=return_attention_weights,
-            average_attn_weights=False,
-        )
-        attn_output = self.norm2(query + cross_attn_output).squeeze(1)
-
-        if return_attention_weights:
-            return attn_output, cross_attn_weights
-        return attn_output
+        contexts = self.norm1(attention_input + self_attn_output)
+        diff = contexts - query
+        projected_diff = self.diff_projector(diff)
+        mean_pool = projected_diff.mean(dim=1)
+        max_pool = projected_diff.max(dim=1).values
+        pooled = torch.cat((mean_pool, max_pool), dim=-1)
+        return self.pool_projector(pooled)
 
 
-class GatedSelfAttentionEncoder(nn.Module):
-    """Let a zero-initialized feature gate control MHA context updates."""
-
-    def __init__(
-        self,
-        hidden_dim: int,
-        num_heads: int = 8,
-        dropout: float = 0.1,
-    ):
-        super().__init__()
-        self.mha = nn.MultiheadAttention(
-            embed_dim=hidden_dim,
-            num_heads=num_heads,
-            dropout=dropout,
-            batch_first=True,
-        )
-        self.gate = nn.Linear(hidden_dim * 4, hidden_dim)
-        nn.init.zeros_(self.gate.weight)
-        nn.init.zeros_(self.gate.bias)
-
-    def set_attention_dropout(self, probability: float):
-        self.mha.dropout = probability
-
-    def forward(self, contexts: torch.Tensor):
-        update, _ = self.mha(
-            contexts, contexts, contexts, need_weights=False
-        )
-        features = torch.cat(
-            (
-                contexts,
-                update,
-                contexts * update,
-                torch.abs(contexts - update),
-            ),
-            dim=-1,
-        )
-        gate = torch.tanh(self.gate(features))
-        return contexts + gate * update
-
-
-class GatedCrossAttentionPooling(nn.Module):
-    """Pool contexts with an explicit learned query-context matching gate."""
-
-    def __init__(
-        self,
-        embd_dim: int,
-        hidden_dim: int = 256,
-        dropout: float = 0.1,
-    ):
-        super().__init__()
-        self.embd_dim = embd_dim
-        self.hidden_dim = hidden_dim
-        self.dropout = dropout
-        self.query_projector = nn.Sequential(
-            nn.Linear(embd_dim, hidden_dim),
-            nn.LayerNorm(hidden_dim),
-        )
-        self.context_projector = nn.Sequential(
-            nn.Linear(embd_dim, hidden_dim),
-            nn.LayerNorm(hidden_dim),
-        )
-        self.self_attention = GatedSelfAttentionEncoder(
-            hidden_dim=hidden_dim,
-            num_heads=8,
-            dropout=dropout,
-        )
-        self.ffn_norm = nn.LayerNorm(hidden_dim)
-        self.ffn = nn.Sequential(
-            nn.Linear(hidden_dim, hidden_dim * 2),
-            nn.GELU(),
-            nn.Dropout(dropout),
-            nn.Linear(hidden_dim * 2, hidden_dim),
-        )
-        nn.init.zeros_(self.ffn[-1].weight)
-        nn.init.zeros_(self.ffn[-1].bias)
-        self.gate = nn.Sequential(
-            nn.Linear(hidden_dim * 4, hidden_dim),
-            nn.GELU(),
-            nn.Dropout(dropout),
-            nn.Linear(hidden_dim, 1),
-        )
-        self.value_projector = nn.Linear(embd_dim, embd_dim)
-        self.output_norm = nn.LayerNorm(embd_dim)
-        zero_init_linear_biases(self)
-
-    def set_attention_dropout(self, probability: float):
-        self.self_attention.set_attention_dropout(probability)
-        self.ffn[2].p = probability
-        self.gate[2].p = probability
-
-    def forward(
-        self,
-        contexts_embds: torch.Tensor,
-        query_embd: torch.Tensor,
-        return_attention_weights: bool = False,
-    ):
-        query = self.query_projector(query_embd)
-        contexts = self.context_projector(contexts_embds)
-        contexts = self.self_attention(contexts)
-        contexts = contexts + self.ffn(self.ffn_norm(contexts))
-        expanded_query = query.unsqueeze(1).expand_as(contexts)
-        features = torch.cat(
-            (
-                expanded_query,
-                contexts,
-                expanded_query * contexts,
-                torch.abs(expanded_query - contexts),
-            ),
-            dim=-1,
-        )
-        logits = self.gate(features).squeeze(-1)
-        weights = torch.softmax(logits, dim=-1)
-        values = self.value_projector(contexts_embds)
-        output = self.output_norm(
-            torch.sum(weights.unsqueeze(-1) * values, dim=1)
-        )
-        if return_attention_weights:
-            # Match nn.MultiheadAttention: (batch, heads, query, contexts).
-            return output, weights[:, None, None, :]
-        return output
-        
-
-class HyperNetController_CrossAttention(nn.Module):
+class HyperNetController_QueryDiffPooling(nn.Module):
     def __init__(self, device: torch.device, embd_dim:int, projected_embd_dim:int, input_dim:int, reduction_factor:int, task_hidden_dim:int,num_layers:int = 28):
         super().__init__()
         self.num_layers = num_layers
@@ -221,7 +94,7 @@ class HyperNetController_CrossAttention(nn.Module):
         self.device = device
         self.embd_dim = embd_dim
 
-        self.embds_pool = GatedCrossAttentionPooling(self.embd_dim)
+        self.embds_pool = QueryDiffPooling(self.embd_dim)
 
         self.layer_id_embeddings = nn.Embedding(self.num_layers,self.embd_dim).to(self.device)
         self.position_id_embeddings = nn.Embedding(2, self.embd_dim).to(self.device)
@@ -251,14 +124,9 @@ class HyperNetController_CrossAttention(nn.Module):
         self,
         context_embds,
         query_embd,
-        return_attention_weights: bool = False,
     ):
         """Pool context/query embeddings once for all decoder layers."""
-        return self.embds_pool(
-            context_embds,
-            query_embd,
-            return_attention_weights=return_attention_weights,
-        )
+        return self.embds_pool(context_embds, query_embd)
 
     def forward(
         self,
@@ -308,8 +176,8 @@ class HyperNetController_CrossAttention(nn.Module):
         return (feed_forward_output, self_attn_output)
 
 
-class HyperNetWrapper_CrossAttention(nn.Module):
-    def __init__(self, original_layer: nn.Module, hypernet: HyperNetController_CrossAttention, layer_id:int):
+class HyperNetWrapper_QueryDiffPooling(nn.Module):
+    def __init__(self, original_layer: nn.Module, hypernet: HyperNetController_QueryDiffPooling, layer_id:int):
         super().__init__()
         self.original_layer = original_layer
         object.__setattr__(self, "_hypernet", hypernet)

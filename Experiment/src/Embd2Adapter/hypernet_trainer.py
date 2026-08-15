@@ -132,34 +132,17 @@ class HyperNetTrainer:
         gold_contexts: list[list[str]],
         distractor_contexts: list[list[str]],
     ) -> list[list[str]]:
-        contexts, _ = self.build_contexts_with_attention_labels(
-            gold_contexts,
-            distractor_contexts,
-        )
-        return contexts
-
-    def build_contexts_with_attention_labels(
-        self,
-        gold_contexts: list[list[str]],
-        distractor_contexts: list[list[str]],
-    ) -> tuple[list[list[str]], list[list[int]]]:
         if len(gold_contexts) != len(distractor_contexts):
             raise ValueError(
                 "gold_contexts and distractor_contexts must have the same length."
             )
         rng = random.Random(get_global_seed())
         context_groups = []
-        attention_labels = []
         for gold_context, distractors in zip(gold_contexts, distractor_contexts):
-            labeled_contexts = [
-                (context, 1) for context in gold_context
-            ] + [
-                (context, 0) for context in distractors
-            ]
-            rng.shuffle(labeled_contexts)
-            context_groups.append([context for context, _ in labeled_contexts])
-            attention_labels.append([label for _, label in labeled_contexts])
-        return context_groups, attention_labels
+            contexts = list(gold_context) + list(distractors)
+            rng.shuffle(contexts)
+            context_groups.append(contexts)
+        return context_groups
 
     def build_training_contexts(self) -> list[list[str]]:
         return self.build_contexts(

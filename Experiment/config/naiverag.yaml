@@ -2,7 +2,7 @@ ollama:
   host: "http://localhost:11434"
 
 llm:
-  model_name: "granite4.1:3b"
+  model_name: "llama3.2:3b"
   options:
     temperature: 0.2
     num_predict: 2048

@@ -14,14 +14,13 @@ hypernet:
     # Resolved from the repository root, independent of the notebook CWD.
     embedding_cache_path: "Notebooks/outputs/cache/embeddings_cache.npy"
     output_dir_mean_embds: "./outputs/mean_embds"
-    output_dir_cross_attn: "./outputs/cross_attn"
+    output_dir_query_diff_pooling: "./outputs/query_diff_pooling"
     num_train_epochs: 3
     per_device_train_batch_size: 1
     gradient_accumulation_steps: 8
     bf16: True
     gradient_checkpointing: True
     learning_rate: 5e-5
-    attention_loss_weight: 0.05
     warmup_steps: 100
     logging_steps: 150
     eval_strategy: "steps"
